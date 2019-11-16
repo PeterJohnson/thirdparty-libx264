@@ -1,0 +1,240 @@
+import org.gradle.internal.os.OperatingSystem
+
+import java.nio.file.Files
+import java.nio.file.Paths;
+
+plugins {
+    id 'c'
+    id 'java'
+}
+
+apply from: 'config.gradle'
+
+def outputsFolder = file("$buildDir/allOutputs")
+
+task copyAllOutputs(type: Copy) {
+    destinationDir outputsFolder
+}
+
+build.dependsOn copyAllOutputs
+
+ext.addTaskToCopyAllOutputs = { task ->
+    copyAllOutputs.dependsOn task
+    copyAllOutputs.inputs.file task.archivePath
+    copyAllOutputs.from task.archivePath
+}
+
+def date = new Date()
+def formattedDate = date.format('yyMMdd')
+ext.version = "158"
+
+ext.licenseFile = file("$rootDir/x264/COPYING")
+
+def getPlatform() {
+    def platform
+    def os_name = System.getProperty("os.name")
+    def os_arch = System.getProperty("os.arch")
+
+    if (os_arch == 'amd64') {
+        os_arch = 'x86_64'
+    } else if (os_arch == 'i386') {
+        os_arch = 'x86'
+    }
+
+    if (OperatingSystem.current().isWindows()) {
+        platform = "windows-${os_arch}"
+    } else if (OperatingSystem.current().isLinux()) {
+        platform = "linux-${os_arch}"
+    } else if (OperatingSystem.current().isMacOsX()) {
+        platform = "osx-${os_arch}"
+    } else {
+        platform = "${os_name}-${os_arch}"
+    }
+    return platform
+}
+
+def getOutputFormat(platform) {
+    if (platform == "linux-athena") {
+        return "elf32-littlearm"
+    } else if (platform == "linux-raspbian") {
+        return "elf32-littlearm"
+    } else if (platform == "linux-aarch64bionic") {
+        return ""
+    } else if (platform == "linux-x86") {
+        return "elf32-i386"
+    } else if (platform == "linux-x86_64") {
+        return "elf64-x86-64"
+    } else if (platform == "osx-x86") {
+        return ""
+    } else if (platform == "osx-x86_64") {
+        return ""
+    } else if (platform == "windows-x86") {
+        return "pe-i386"
+    } else if (platform == "windows-x86_64") {
+        return "pe-x86-64"
+    } else {
+        return ""
+    }
+}
+
+def getPlatformPath(platform) {
+    if (platform == "linux-athena") {
+        return "linux/athena"
+    } else if (platform == "linux-raspbian") {
+        return "linux/raspbian"
+    } else if (platform == "linux-aarch64bionic") {
+        return "linux/aarch64bionic"
+    } else if (platform == "linux-x86") {
+        return "linux/x86"
+    } else if (platform == "linux-x86_64") {
+        return "linux/x86-64"
+    } else if (platform == "osx-x86") {
+        return "osx/x86"
+    } else if (platform == "osx-x86_64") {
+        return "osx/x86-64"
+    } else if (platform == "windows-x86") {
+        return "windows/x86"
+    } else if (platform == "windows-x86_64") {
+        return "windows/x86-64"
+    } else {
+        return ""
+    }
+}
+
+// Determine what repo to publish to. Default is development. Valid options are development, beta, stable, and release
+if (!project.hasProperty('repo')) {
+    allprojects {
+        ext.repo = 'development'
+    }
+}
+
+if (!project.hasProperty('platform')) {
+    println "No 'platform' property specified; using the build system's platform"
+    ext.platform = getPlatform()
+}
+ext.platformPath = getPlatformPath(project.platform)
+
+println "Building for platform ${project.platform}"
+
+ext.platformClassifier = project.platform.replaceFirst('-', '').replace('_', '-')
+
+ext.rootPath = Paths.get(projectDir.canonicalPath).resolve('x264')
+ext.makeBuildDirectory = Paths.get(projectDir.canonicalPath).resolve('build').resolve(project.platform)
+ext.makeBuildSharedDirectory = Paths.get(projectDir.canonicalPath).resolve('buildShared').resolve(project.platform)
+
+ext.makeBuildDebugDirectory = Paths.get(projectDir.canonicalPath).resolve('buildDebug').resolve(project.platform)
+ext.makeBuildSharedDebugDirectory = Paths.get(projectDir.canonicalPath).resolve('buildSharedDebug').resolve(project.platform)
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+def stripExe = 'strip'
+def objCopyExe = 'objcopy'
+
+if (project.platform == "linux-athena") {
+    stripExe = 'arm-frc2020-linux-gnueabi-strip'
+    objCopyExe = 'arm-frc2020-linux-gnueabi-objcopy'
+} else if (project.platform == "linux-raspbian") {
+    stripExe = 'arm-raspbian10-linux-gnueabihf-strip'
+    objCopyExe = 'arm-raspbian10-linux-gnueabihf-objcopy'
+} else if (project.platform == "linux-aarch64bionic") {
+    stripExe = 'aarch64-bionic-linux-gnu-strip'
+    objCopyExe = 'aarch64-bionic-linux-gnu-objcopy'
+}
+
+['': project.makeBuildDirectory,
+ 'Shared': project.makeBuildSharedDirectory,
+ 'Debug': project.makeBuildDebugDirectory,
+ 'SharedDebug': project.makeBuildSharedDebugDirectory
+].each{ buildType, buildDirectory ->
+
+    project.tasks.create('configure' + buildType, Exec) {
+        inputs.dir 'x264'
+
+        def configureArgs = {
+            def args = ['--disable-cli', '--enable-pic']
+
+            if (buildType.contains("Shared")) {
+                args = args + '--enable-shared'
+            } else {
+                args = args + '--enable-static'
+            }
+            if (buildType.contains("Debug")) {
+                args = args + '--enable-debug'
+            }
+
+            if (project.platform == "linux-athena") {
+                return args + '--host=arm-unknown-linux-gnueabi' +
+                    '--cross-prefix=arm-frc2020-linux-gnueabi-'
+            } else if (project.platform == "linux-raspbian") {
+                return args + '--host=arm-unknown-linux-gnueabihf' +
+                    '--cross-prefix=arm-raspbian10-linux-gnueabihf-'
+            } else if (project.platform == "linux-aarch64bionic") {
+                return args + '--host=aarch64-unknown-linux-gnu' +
+                    '--cross-prefix=aarch64-bionic-linux-gnu-'
+            }
+
+            return args
+        }
+
+        if (!Files.exists(buildDirectory)) {
+            Files.createDirectories(buildDirectory)
+        }
+        workingDir buildDirectory.toString()
+
+        if (project.platform.startsWith("windows")) {
+            executable 'bash'
+            args = ["-c", "CL=cl " + Paths.get(projectDir.canonicalPath).resolve('x264').resolve('configure').toString() + " " + configureArgs().join(" ")]
+        } else {
+            executable Paths.get(projectDir.canonicalPath).resolve('x264').resolve('configure').toString()
+            args = configureArgs()
+        }
+        outputs.file buildDirectory.resolve("Makefile").toFile()
+    }
+
+    project.tasks.create('make' + buildType, Exec) {
+        dependsOn 'configure' + buildType
+        workingDir buildDirectory.toString()
+        def processors = Runtime.runtime.availableProcessors()
+
+        executable 'make'
+        inputs.file buildDirectory.resolve("Makefile").toFile()
+        if (project.platform.startsWith("windows")) {
+            if (!buildType.contains("Shared")) {
+                outputs.file buildDirectory.resolve("libx264.lib").toFile()
+            } else {
+                outputs.file buildDirectory.resolve("libx264-${project.version}.dll").toFile()
+            }
+        } else if (project.platform.startsWith("osx")) {
+            if (!buildType.contains("Shared")) {
+                outputs.file buildDirectory.resolve("libx264.a").toFile()
+            } else {
+                outputs.file buildDirectory.resolve("libx264.${project.version}.dylib").toFile()
+            }
+        } else {
+            if (!buildType.contains("Shared")) {
+                outputs.file buildDirectory.resolve("libx264.a").toFile()
+            } else {
+                outputs.file buildDirectory.resolve("libx264.so.${project.version}").toFile()
+            }
+        }
+    }
+}
+
+if (!project.hasProperty('skipRelease')) {
+    build.dependsOn make
+    build.dependsOn makeShared
+}
+
+if (!project.hasProperty('skipDebug')) {
+    build.dependsOn makeDebug
+    build.dependsOn makeSharedDebug
+}
+
+apply from: 'publish.gradle'
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '4.9'
+}

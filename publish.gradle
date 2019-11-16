@@ -1,0 +1,257 @@
+import java.security.MessageDigest
+
+apply plugin: 'maven-publish'
+
+publishing {
+    repositories {
+        maven {
+            url "${System.getProperty('user.home')}/releases/maven/development"
+        }
+        maven {
+            url "${System.getProperty('user.home')}/releases/maven/release"
+        }
+    }
+}
+
+def pubVersion = "${project.ext.version}-1"
+
+def outputsFolder = file("$project.buildDir/outputs")
+
+def baseArtifactId = 'libx264'
+def artifactGroupId = 'edu.wpi.first.thirdparty.frc2020.libx264'
+def zipBaseName = '_GROUP_edu_wpi_first_thirdparty_frc2020_libx264_ID_libx264-cpp_CLS'
+
+def versionFile = file("$outputsFolder/version.txt")
+
+task outputVersions() {
+    description = 'Prints the versions of this to a file for use by the downstream packaging project'
+    group = 'Build'
+    outputs.files(versionFile)
+
+    doFirst {
+        buildDir.mkdir()
+        outputsFolder.mkdir()
+    }
+
+    doLast {
+        versionFile.write pubVersion
+    }
+}
+
+build.dependsOn outputVersions
+
+task cppSourcesZip(type: Zip, dependsOn: make) {
+    destinationDir = outputsFolder
+    baseName = zipBaseName
+    classifier = "sources"
+
+    from(licenseFile) {
+        into '/'
+    }
+
+    from('x264') {
+        into '/'
+        include '**/*.c', '**/*.h'
+    }
+
+    includeEmptyDirs = false
+}
+
+task cppHeadersZip(type: Zip, dependsOn: make) {
+    destinationDir = outputsFolder
+    baseName = zipBaseName
+    classifier = "headers"
+
+    from(licenseFile) {
+        into '/'
+    }
+
+    from ('x264') {
+        into '/'
+        include 'x264.h'
+    }
+
+    from (project.makeBuildDirectory.toFile()) {
+        into '/'
+        include 'x264_config.h'
+    }
+
+    includeEmptyDirs = false
+}
+
+['', 'Debug' ].each{ buildType ->
+
+    def staticBuildDir = buildType.contains('Debug') ? project.makeBuildDebugDirectory : project.makeBuildDirectory
+    def sharedBuildDir = buildType.contains('Debug') ? project.makeBuildSharedDebugDirectory : project.makeBuildSharedDirectory
+
+    def outputClassifier = project.ext.platformClassifier
+    def outputClassifierStatic = project.ext.platformClassifier + 'static'
+    if (buildType.contains('Debug')) {
+        outputClassifier = outputClassifier + 'debug'
+        outputClassifierStatic = outputClassifierStatic + 'debug'
+    }
+
+    def buildTypeFolder = buildType.contains('Debug') ? 'Debug' : 'Release'
+
+    project.tasks.create('cppLibsZip' + buildType, Zip) {
+        dependsOn tasks.named('makeShared' + buildType)
+        destinationDir = outputsFolder
+        classifier = outputClassifier
+        baseName = zipBaseName
+        duplicatesStrategy = 'exclude'
+
+        manifest {
+            attributes(
+                    "Created-By": "WPILib Gradle Build Script",
+                    "Implementation-Title": "libx264 Native Libraries, ${project.ext.platformClassifier}",
+                    "Implementation-Version": pubVersion,
+                    "Implementation-Vendor": "x264 project",
+
+                    "Bundle-Name": "${baseName}",
+                    "Bundle-Version": pubVersion,
+                    "Bundle-License": "https://opensource.org/licenses/GPL-2.0",
+                    "Bundle-Vendor": "WPILib")
+        }
+
+        from(licenseFile) {
+            into '/'
+        }
+
+        if (!project.platform.startsWith("windows")) {
+            from(sharedBuildDir.toFile()) {
+                into project.platformPath + '/shared'
+                include '*.so.*'
+                include '*.dylib'
+            }
+        } else {
+            from(sharedBuildDir.resolve(buildTypeFolder).toFile()) {
+                into project.platformPath + '/shared'
+                include '*.lib'  // import library
+                include '*.dll'
+                include '*.pdb'
+            }
+        }
+    }
+
+    project.tasks.create('cppLibsZipStatic' + buildType, Zip) {
+        dependsOn tasks.named('make' + buildType)
+        destinationDir = outputsFolder
+        classifier = outputClassifierStatic
+        baseName = zipBaseName
+        duplicatesStrategy = 'exclude'
+
+        manifest {
+            attributes(
+                    "Created-By": "WPILib Gradle Build Script",
+                    "Implementation-Title": "libx264 Native Libraries, ${project.ext.platformClassifier}",
+                    "Implementation-Version": pubVersion,
+                    "Implementation-Vendor": "x264 project",
+
+                    "Bundle-Name": "${baseName}",
+                    "Bundle-Version": pubVersion,
+                    "Bundle-License": "https://opensource.org/licenses/GPL-2.0",
+                    "Bundle-Vendor": "WPILib")
+        }
+
+        from(licenseFile) {
+            into '/'
+        }
+
+        if (!project.platform.startsWith("windows")) {
+            from(staticBuildDir.toFile()) {
+                into project.platformPath + '/static'
+                include '*.a'
+            }
+        } else {
+            from(staticBuildDir.resolve(buildTypeFolder).toFile()) {
+                into project.platformPath + '/static'
+                include '*.lib'
+                include '*.pdb'
+            }
+        }
+    }
+}
+
+if (!project.hasProperty('skipRelease')) {
+    build.dependsOn cppLibsZip
+    build.dependsOn cppLibsZipStatic
+    addTaskToCopyAllOutputs(cppLibsZip)
+    addTaskToCopyAllOutputs(cppLibsZipStatic)
+}
+
+if (!project.hasProperty('skipDebug')) {
+    build.dependsOn cppLibsZipDebug
+    build.dependsOn cppLibsZipStaticDebug
+
+    addTaskToCopyAllOutputs(cppLibsZipDebug)
+    addTaskToCopyAllOutputs(cppLibsZipStaticDebug)
+}
+
+if (!project.hasProperty('skipSources')) {
+    build.dependsOn cppHeadersZip
+    build.dependsOn cppSourcesZip
+    addTaskToCopyAllOutputs(cppSourcesZip)
+    addTaskToCopyAllOutputs(cppHeadersZip)
+}
+
+if (!project.hasProperty('jenkinsBuild')) {
+    artifacts {
+        archives cppHeadersZip
+        archives cppSourcesZip
+        archives cppLibsZip
+        archives cppLibsZipDebug
+        archives cppLibsZipStatic
+        archives cppLibsZipStaticDebug
+    }
+}
+
+model {
+    publishing {
+        def allTask
+        if (!project.hasProperty('jenkinsBuild')) {
+            allTask = createAllCombined([cppLibsZip], 'libx264', zipBaseName, Zip, project, '')
+        }
+
+        def allTaskDebug
+        if (!project.hasProperty('jenkinsBuild')) {
+            allTaskDebug = createAllCombined([cppLibsZipDebug], 'libx264', zipBaseName, Zip, project, 'debug')
+        }
+
+        def allTaskStatic
+        if (!project.hasProperty('jenkinsBuild')) {
+            allTaskStatic = createAllCombined([cppLibsZipStatic], 'libx264', zipBaseName, Zip, project, 'static')
+        }
+
+        def allTaskStaticDebug
+        if (!project.hasProperty('jenkinsBuild')) {
+            allTaskStaticDebug = createAllCombined([cppLibsZipStaticDebug], 'libx264', zipBaseName, Zip, project, 'staticdebug')
+        }
+
+        publications {
+            cpp(MavenPublication) {
+                artifact cppHeadersZip
+                artifact cppSourcesZip
+                artifact cppLibsZip
+                artifact cppLibsZipDebug
+                artifact cppLibsZipStatic
+                artifact cppLibsZipStaticDebug
+
+                if (!project.hasProperty('jenkinsBuild')) {
+                    artifact allTask
+                    artifact allTaskDebug
+                    artifact allTaskStatic
+                    artifact allTaskStaticDebug
+                }
+
+                artifactId = "${baseArtifactId}-cpp"
+                groupId artifactGroupId
+                version pubVersion
+            }
+        }
+        repositories {
+            maven {
+                url "${System.getProperty('user.home')}/releases/maven/${project.repo}"
+            }
+        }
+    }
+}
