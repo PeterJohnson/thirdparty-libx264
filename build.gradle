@@ -186,7 +186,7 @@ if (project.platform == "linux-athena") {
 
         if (project.platform.startsWith("windows")) {
             executable 'bash'
-            args = ["-c", "CL=cl " + Paths.get(projectDir.canonicalPath).resolve('x264').resolve('configure').toString() + " " + configureArgs().join(" ")]
+            args = ["-c", "CC=cl ../../x264/configure " + configureArgs().join(" ")]
         } else {
             executable Paths.get(projectDir.canonicalPath).resolve('x264').resolve('configure').toString()
             args = configureArgs()
