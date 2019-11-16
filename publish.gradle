@@ -117,19 +117,13 @@ task cppHeadersZip(type: Zip, dependsOn: make) {
             into '/'
         }
 
-        if (!project.platform.startsWith("windows")) {
-            from(sharedBuildDir.toFile()) {
-                into project.platformPath + '/shared'
-                include '*.so.*'
-                include '*.dylib'
-            }
-        } else {
-            from(sharedBuildDir.resolve(buildTypeFolder).toFile()) {
-                into project.platformPath + '/shared'
-                include '*.lib'  // import library
-                include '*.dll'
-                include '*.pdb'
-            }
+        from(sharedBuildDir.toFile()) {
+            into project.platformPath + '/shared'
+            include '*.so.*'
+            include '*.dylib'
+            include '*.lib'  // import library
+            include '*.dll'
+            include '*.pdb'
         }
     }
 
@@ -157,17 +151,11 @@ task cppHeadersZip(type: Zip, dependsOn: make) {
             into '/'
         }
 
-        if (!project.platform.startsWith("windows")) {
-            from(staticBuildDir.toFile()) {
-                into project.platformPath + '/static'
-                include '*.a'
-            }
-        } else {
-            from(staticBuildDir.resolve(buildTypeFolder).toFile()) {
-                into project.platformPath + '/static'
-                include '*.lib'
-                include '*.pdb'
-            }
+        from(staticBuildDir.toFile()) {
+            into project.platformPath + '/static'
+            include '*.a'
+            include '*.lib'
+            include '*.pdb'
         }
     }
 }
